@@ -1,0 +1,573 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>むしトリたいかい スコア記録</title>
+<style>
+:root{
+  --line:#dcdcdc;
+  --bg:#fff;
+  --fg:#222;
+  --sub:#666;
+  --plus:#0a6b3d;
+  --minus:#b3261e;
+  --accent:#1b3a5c;
+}
+*{box-sizing:border-box}
+body{
+  font-family:system-ui,-apple-system,"Hiragino Sans","Noto Sans JP",sans-serif;
+  max-width:720px;margin:0 auto;padding:0 10px 60px;
+  color:var(--fg);background:var(--bg);line-height:1.6;
+}
+
+/* ベストスコア（画面上部に固定） */
+.best{
+  position:sticky;top:0;z-index:10;
+  background:var(--accent);color:#fff;
+  margin:0 -10px 12px;padding:10px 14px;
+  box-shadow:0 2px 6px rgba(0,0,0,.2);
+}
+.best .ttl{font-size:.8em;opacity:.85}
+.best .val{font-size:1.3em;font-weight:bold}
+
+/* DAY */
+details.day{border:1px solid var(--line);border-radius:10px;margin:10px 0;background:#fafafa}
+details.day>summary{
+  padding:10px 12px;font-weight:bold;cursor:pointer;list-style:none;
+  display:flex;justify-content:space-between;align-items:center;
+}
+details.day>summary::-webkit-details-marker{display:none}
+details.day>summary::before{content:"▶";font-size:.8em;margin-right:6px;color:var(--sub)}
+details.day[open]>summary::before{content:"▼"}
+.daybest{font-weight:normal;font-size:.85em;color:var(--sub)}
+
+/* リサーチ枠 */
+.slot{border-top:1px solid var(--line);padding:12px;background:#fff}
+.slot:first-of-type{border-top:none}
+.slot-head{display:flex;justify-content:space-between;align-items:center;gap:8px;margin-bottom:8px}
+.slot-no{font-weight:bold;color:var(--accent)}
+.slot-score{font-size:1.15em;font-weight:bold;white-space:nowrap}
+.slot-score.p{color:var(--plus)}
+.slot-score.m{color:var(--minus)}
+.label-input{width:100%;padding:6px;border:1px solid var(--line);border-radius:6px;font-size:1em}
+
+/* ポケモン行 */
+.mon{display:flex;align-items:center;gap:6px;margin:6px 0}
+.mon select{flex:1;min-width:0;padding:6px;border:1px solid var(--line);border-radius:6px;font-size:1em}
+.mon label{white-space:nowrap;font-size:.9em}
+.mon .del{border:none;background:none;font-size:1.1em;cursor:pointer;padding:2px 6px;color:var(--sub)}
+.count{font-size:.85em;color:var(--sub);margin-left:6px}
+
+button{font-size:.95em;padding:7px 12px;border:1px solid var(--line);
+  border-radius:6px;background:#fff;cursor:pointer}
+button:disabled{opacity:.45;cursor:not-allowed}
+.row{display:flex;flex-wrap:wrap;gap:6px;align-items:center;margin-top:8px}
+
+/* 内訳 */
+.detail{font-size:.85em;color:var(--sub);margin-top:8px;
+  background:#f7f7f7;border-radius:6px;padding:8px;white-space:pre-wrap}
+.detail .sprayed{text-decoration:line-through;opacity:.6}
+
+/* スプレー */
+.spray-box{margin-top:8px;font-size:.95em}
+.spray-note{font-size:.85em;color:var(--sub);margin-left:4px}
+
+/* 写真 */
+.photo{max-width:100%;border-radius:8px;margin-top:8px;display:block}
+.post-text{width:100%;min-height:90px;margin-top:8px;padding:8px;
+  border:1px solid var(--line);border-radius:6px;font-size:.9em;font-family:inherit}
+.hint{font-size:.8em;color:var(--sub);margin-top:20px;border-top:1px solid var(--line);padding-top:12px}
+</style>
+</head>
+<body>
+
+<div class="best">
+  <div class="ttl">★ ベストスコア</div>
+  <div class="val" id="bestVal">まだ記録がありません</div>
+</div>
+
+<div id="days"></div>
+
+<p class="hint">
+記録はこの端末のブラウザ内にのみ保存されます。他の端末では見られません。<br>
+写真は保存されないため、ページを開き直すと消えます（投稿用画像を作るときだけ使います）。
+</p>
+
+<script>
+"use strict";
+
+/* ============================================================
+   スコア表（設計書 4.1）
+   リザードン+40・ヘラクロス-32 は天敵ボーナス反映済みの値
+   ============================================================ */
+const SCORE = {
+  // ひこう系（加点）
+  "ワシボン":5, "ウォーグル":12,
+  "チルット":5, "チルタリス":12,
+  "ドードー":5, "ドードリオ":12,
+  "ネイティ":5, "ネイティオ":12,
+  "ウッウ":16, "デリバード":16, "カモネギ":16,
+  "ヤミカラス":16, "ドンカラス":20,
+  "ルチャブル":26, "リザードン":40, "ボーマンダ":25, "クレセリア":30,
+  // むし系（減点）
+  "アゴジムシ":-5, "デンヂムシ":-12, "クワガノン":-22,
+  "イシズマイ":-5, "イワパレス":-12,
+  "ヘラクロス":-32, "ツボツボ":-16, "カイロス":-16,
+  "キャタピー":-5, "トランセル":-7, "バタフリー":-15,
+  // 種族ボーナス用（個体点なし）
+  "ヒトカゲ":0, "リザード":0, "タツベイ":0, "コモルー":0
+};
+
+/* 選択肢（グループ分け） */
+const GROUPS = [
+  { name:"ひこう（加点）", list:["ワシボン","ウォーグル","チルット","チルタリス",
+      "ドードー","ドードリオ","ネイティ","ネイティオ","ウッウ","デリバード",
+      "カモネギ","ヤミカラス","ドンカラス","ルチャブル","リザードン","ボーマンダ","クレセリア"] },
+  { name:"むし（減点）", list:["アゴジムシ","デンヂムシ","クワガノン","イシズマイ","イワパレス",
+      "ヘラクロス","ツボツボ","カイロス","キャタピー","トランセル","バタフリー"] },
+  { name:"個体点なし（種族ボーナス用）", list:["ヒトカゲ","リザード","タツベイ","コモルー"] }
+];
+
+/* 種族ボーナス（設計書 4.3）／色違いでも倍にしない */
+const FAMILIES = [
+  { members:["ワシボン","ウォーグル"],            bonus:10 },
+  { members:["チルット","チルタリス"],            bonus:10 },
+  { members:["ドードー","ドードリオ"],            bonus:10 },
+  { members:["ネイティ","ネイティオ"],            bonus:10 },
+  { members:["ヤミカラス","ドンカラス"],          bonus:10 },
+  { members:["ヒトカゲ","リザード","リザードン"], bonus:20 },
+  { members:["タツベイ","コモルー","ボーマンダ"], bonus:20 },
+  { members:["イシズマイ","イワパレス"],                 bonus:-10 },
+  { members:["アゴジムシ","デンヂムシ","クワガノン"],    bonus:-20 },
+  { members:["キャタピー","トランセル","バタフリー"],    bonus:-20 }
+];
+
+const DAYS = 7;        // イベント期間
+const SLOTS_PER_DAY = 2;
+const MAX_MONS = 10;   // 1リサーチあたりの上限
+const STORAGE_KEY = "mushitori_v1";
+const SLOT_MARK = ["①","②"];
+
+/* ============================================================
+   状態
+   ============================================================ */
+function emptySlot(){ return { label:"", spray:false, mons:[] }; }
+
+function createState(){
+  return {
+    version:1,
+    days: Array.from({length:DAYS}, (_,i)=>({
+      day: i+1,
+      slots: Array.from({length:SLOTS_PER_DAY}, emptySlot)
+    }))
+  };
+}
+
+function loadState(){
+  try{
+    const raw = localStorage.getItem(STORAGE_KEY);
+    if(!raw) return createState();
+    const s = JSON.parse(raw);
+    if(!s || s.version !== 1 || !Array.isArray(s.days)) return createState();
+    // 形が壊れていても落ちないように埋め直す
+    const fresh = createState();
+    s.days.forEach((d,i)=>{
+      if(i >= DAYS || !d || !Array.isArray(d.slots)) return;
+      d.slots.forEach((sl,j)=>{
+        if(j >= SLOTS_PER_DAY || !sl) return;
+        fresh.days[i].slots[j] = {
+          label: typeof sl.label === "string" ? sl.label : "",
+          spray: sl.spray === true,
+          mons: Array.isArray(sl.mons)
+            ? sl.mons.slice(0, MAX_MONS).map(m => ({
+                name: (m && typeof m.name === "string") ? m.name : "",
+                shiny: !!(m && m.shiny)
+              }))
+            : []
+        };
+      });
+    });
+    return fresh;
+  }catch(e){
+    return createState();
+  }
+}
+
+function save(){
+  try{
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
+  }catch(e){
+    console.warn("保存に失敗しました", e);
+  }
+}
+
+const state = loadState();
+const photos = {};      // 写真は保存しない（この変数の中だけに持つ）
+const views  = [];      // 各リサーチ枠のDOM参照
+
+/* ============================================================
+   スコア計算（設計書 4.5）
+   ============================================================ */
+function calcSlot(slot){
+  const items = [];
+
+  // 1. 個体スコア（色違いは2倍）
+  slot.mons.forEach(m=>{
+    if(!m.name) return;
+    const base = SCORE[m.name] || 0;
+    const value = m.shiny ? base * 2 : base;
+    items.push({ text: m.name + (m.shiny ? "★" : ""), value });
+  });
+
+  // 2. 種族ボーナス（色違いでも倍にしない）
+  FAMILIES.forEach(f=>{
+    const complete = f.members.every(n => slot.mons.some(m => m.name === n));
+    if(complete){
+      items.push({ text:"種族ボーナス(" + f.members.join("+") + ")", value:f.bonus });
+    }
+  });
+
+  // 3. スプレー：減点のうち最も大きい1つだけを0にする
+  if(slot.spray){
+    let worstIdx = -1, worst = 0;
+    items.forEach((it, i)=>{
+      if(it.value < worst){ worst = it.value; worstIdx = i; }
+    });
+    if(worstIdx >= 0) items[worstIdx].sprayed = true;
+  }
+
+  // 4. 合計
+  const total = items.reduce((sum, it)=> sum + (it.sprayed ? 0 : it.value), 0);
+  return { total, items };
+}
+
+/* ============================================================
+   画面の組み立て
+   ============================================================ */
+const daysEl = document.getElementById("days");
+
+function buildOptions(){
+  let html = '<option value="">— 選択 —</option>';
+  GROUPS.forEach(g=>{
+    html += '<optgroup label="' + g.name + '">';
+    g.list.forEach(n=>{
+      const v = SCORE[n];
+      const sign = v > 0 ? "+" + v : v;
+      html += '<option value="' + n + '">' + n + "（" + sign + "）</option>";
+    });
+    html += "</optgroup>";
+  });
+  return html;
+}
+const OPTIONS_HTML = buildOptions();
+
+function buildMonRow(slot, mon, view){
+  const row = document.createElement("div");
+  row.className = "mon";
+
+  const sel = document.createElement("select");
+  sel.innerHTML = OPTIONS_HTML;
+  sel.value = mon.name;
+  sel.onchange = ()=>{ mon.name = sel.value; refresh(); };
+
+  const lab = document.createElement("label");
+  const shiny = document.createElement("input");
+  shiny.type = "checkbox";
+  shiny.checked = mon.shiny;
+  shiny.onchange = ()=>{ mon.shiny = shiny.checked; refresh(); };
+  lab.appendChild(shiny);
+  lab.append("★色違い");
+
+  const del = document.createElement("button");
+  del.className = "del";
+  del.textContent = "✕";
+  del.title = "削除";
+  del.onclick = ()=>{
+    const i = slot.mons.indexOf(mon);
+    if(i >= 0) slot.mons.splice(i, 1);
+    row.remove();
+    refresh();
+  };
+
+  row.append(sel, lab, del);
+  view.monsEl.appendChild(row);
+}
+
+function buildSlot(dayData, slotIndex){
+  const slot = dayData.slots[slotIndex];
+  const wrap = document.createElement("div");
+  wrap.className = "slot";
+
+  // 見出し（枠番号・スコア）
+  const head = document.createElement("div");
+  head.className = "slot-head";
+  const no = document.createElement("span");
+  no.className = "slot-no";
+  no.textContent = "リサーチ " + SLOT_MARK[slotIndex];
+  const scoreEl = document.createElement("span");
+  scoreEl.className = "slot-score";
+  head.append(no, scoreEl);
+
+  // リサーチ名
+  const labelInput = document.createElement("input");
+  labelInput.className = "label-input";
+  labelInput.placeholder = "リサーチ名（任意）";
+  labelInput.value = slot.label;
+  labelInput.oninput = ()=>{ slot.label = labelInput.value; save(); };
+
+  // ポケモン
+  const monsEl = document.createElement("div");
+  const addBtn = document.createElement("button");
+  addBtn.textContent = "＋ポケモン追加";
+  const countEl = document.createElement("span");
+  countEl.className = "count";
+  const addRow = document.createElement("div");
+  addRow.className = "row";
+  addRow.append(addBtn, countEl);
+
+  // スプレー
+  const sprayBox = document.createElement("div");
+  sprayBox.className = "spray-box";
+  const sprayLabel = document.createElement("label");
+  const sprayInput = document.createElement("input");
+  sprayInput.type = "checkbox";
+  sprayInput.checked = slot.spray;
+  const sprayNote = document.createElement("span");
+  sprayNote.className = "spray-note";
+  sprayLabel.appendChild(sprayInput);
+  sprayLabel.append("🧴 むしよけスプレーを使う");
+  sprayBox.append(sprayLabel, sprayNote);
+
+  // 内訳
+  const detailEl = document.createElement("div");
+  detailEl.className = "detail";
+
+  // 写真・投稿
+  const fileInput = document.createElement("input");
+  fileInput.type = "file";
+  fileInput.accept = "image/*";
+  const photoEl = document.createElement("img");
+  photoEl.className = "photo";
+  photoEl.hidden = true;
+  const imgBtn = document.createElement("button");
+  imgBtn.textContent = "📷 投稿用画像を作る";
+  imgBtn.disabled = true;
+  const txtBtn = document.createElement("button");
+  txtBtn.textContent = "📋 投稿文をコピー";
+  const postText = document.createElement("textarea");
+  postText.className = "post-text";
+  postText.hidden = true;
+  const postRow = document.createElement("div");
+  postRow.className = "row";
+  postRow.append(imgBtn, txtBtn);
+
+  wrap.append(head, labelInput, monsEl, addRow, sprayBox, detailEl,
+              fileInput, photoEl, postRow, postText);
+
+  const view = {
+    slot, day: dayData.day, index: slotIndex,
+    scoreEl, detailEl, sprayInput, sprayNote, addBtn, countEl, monsEl,
+    photoEl, imgBtn, postText
+  };
+  views.push(view);
+
+  // 既存データの行を並べる
+  slot.mons.forEach(m => buildMonRow(slot, m, view));
+
+  addBtn.onclick = ()=>{
+    if(slot.mons.length >= MAX_MONS) return;
+    const mon = { name:"", shiny:false };
+    slot.mons.push(mon);
+    buildMonRow(slot, mon, view);
+    refresh();
+  };
+
+  sprayInput.onchange = ()=>{ slot.spray = sprayInput.checked; refresh(); };
+
+  fileInput.onchange = ()=>{
+    const f = fileInput.files[0];
+    if(!f) return;
+    const r = new FileReader();
+    r.onload = ()=>{
+      photos[view.day + "-" + view.index] = r.result;
+      photoEl.src = r.result;
+      photoEl.hidden = false;
+      imgBtn.disabled = false;
+    };
+    r.readAsDataURL(f);
+  };
+
+  imgBtn.onclick = ()=> makeImage(view);
+  txtBtn.onclick = ()=> copyPostText(view);
+
+  return wrap;
+}
+
+function buildAll(){
+  state.days.forEach(d=>{
+    const det = document.createElement("details");
+    det.className = "day";
+    det.open = (d.day === 1);
+
+    const sum = document.createElement("summary");
+    const ttl = document.createElement("span");
+    ttl.textContent = "DAY" + d.day;
+    const best = document.createElement("span");
+    best.className = "daybest";
+    sum.append(ttl, best);
+    det.appendChild(sum);
+    det.dayBestEl = best;
+
+    for(let i = 0; i < SLOTS_PER_DAY; i++){
+      det.appendChild(buildSlot(d, i));
+    }
+    daysEl.appendChild(det);
+    d._el = det;
+  });
+}
+
+/* ============================================================
+   再計算と表示更新
+   ============================================================ */
+function refresh(){
+  // スプレーはイベント期間中1回だけ
+  const sprayUsed = views.some(v => v.slot.spray);
+
+  let best = null;
+
+  views.forEach(v=>{
+    const { total, items } = calcSlot(v.slot);
+    v.total = total;
+    v.items = items;
+
+    // スコア
+    v.scoreEl.textContent = total + "点";
+    v.scoreEl.className = "slot-score " + (total > 0 ? "p" : total < 0 ? "m" : "");
+
+    // 内訳
+    if(items.length === 0){
+      v.detailEl.textContent = "ポケモンを追加すると内訳が出ます";
+    }else{
+      v.detailEl.innerHTML = items.map(it=>{
+        const sign = it.value > 0 ? "+" + it.value : it.value;
+        const line = it.text + "　" + sign + (it.sprayed ? "　→ 0（スプレー）" : "");
+        return it.sprayed ? '<span class="sprayed">' + line + "</span>" : line;
+      }).join("<br>");
+    }
+
+    // ポケモン数
+    v.countEl.textContent = v.slot.mons.length + " / " + MAX_MONS + " 体";
+    v.addBtn.disabled = v.slot.mons.length >= MAX_MONS;
+
+    // スプレーの排他制御
+    const locked = sprayUsed && !v.slot.spray;
+    v.sprayInput.disabled = locked;
+    v.sprayNote.textContent = v.slot.spray ? "（期間中1回のみ・使用中）"
+                            : locked        ? "（他のリサーチで使用済み）"
+                            : "";
+
+    // ベストスコア候補（空の枠は対象外）
+    const hasMon = v.slot.mons.some(m => m.name);
+    if(hasMon && (best === null || total > best.total)) best = v;
+  });
+
+  // DAY見出しのベスト
+  state.days.forEach(d=>{
+    const dayViews = views.filter(v => v.day === d.day && v.slot.mons.some(m => m.name));
+    d._el.dayBestEl.textContent = dayViews.length
+      ? "最高 " + Math.max(...dayViews.map(v => v.total)) + "点"
+      : "未記録";
+  });
+
+  // ベストスコア表示
+  document.getElementById("bestVal").textContent = best
+    ? "DAY" + best.day + " " + SLOT_MARK[best.index] + "　" + best.total + "点"
+      + (best.slot.label ? "（" + best.slot.label + "）" : "")
+    : "まだ記録がありません";
+
+  save();
+}
+
+/* ============================================================
+   X投稿用の出力
+   ============================================================ */
+function buildPostText(view){
+  const names = view.slot.mons
+    .filter(m => m.name)
+    .map(m => m.name + (m.shiny ? "★" : ""));
+  const lines = [
+    "#むしトリたいかい",
+    "DAY" + view.day + " " + SLOT_MARK[view.index] + "　" + view.total + "点"
+  ];
+  if(names.length) lines.push(names.join(" / "));
+  if(view.slot.spray) lines.push("🧴むしよけスプレー使用");
+  return lines.join("\n");
+}
+
+function copyPostText(view){
+  const text = buildPostText(view);
+  view.postText.hidden = false;
+  view.postText.value = text;
+  if(navigator.clipboard && navigator.clipboard.writeText){
+    navigator.clipboard.writeText(text)
+      .then(()=> alert("投稿文をコピーしました"))
+      .catch(()=> view.postText.select());
+  }else{
+    view.postText.select();
+  }
+}
+
+function makeImage(view){
+  const src = photos[view.day + "-" + view.index];
+  if(!src) return;
+
+  const img = new Image();
+  img.onload = ()=>{
+    const maxW = 1080;
+    const scale = Math.min(1, maxW / img.width);
+    const w = Math.round(img.width * scale);
+    const h = Math.round(img.height * scale);
+    const barH = Math.round(w * 0.12);
+
+    const c = document.createElement("canvas");
+    c.width = w;
+    c.height = h + barH;
+    const ctx = c.getContext("2d");
+
+    ctx.drawImage(img, 0, 0, w, h);
+
+    // 下部にスコア帯を描く
+    ctx.fillStyle = "#1b3a5c";
+    ctx.fillRect(0, h, w, barH);
+    ctx.fillStyle = "#fff";
+    ctx.textBaseline = "middle";
+
+    ctx.font = "bold " + Math.round(barH * 0.38) + "px sans-serif";
+    ctx.textAlign = "left";
+    ctx.fillText("DAY" + view.day + " " + SLOT_MARK[view.index], w * 0.04, h + barH * 0.5);
+
+    ctx.font = "bold " + Math.round(barH * 0.52) + "px sans-serif";
+    ctx.textAlign = "right";
+    ctx.fillText(view.total + "点", w * 0.96, h + barH * 0.5);
+
+    c.toBlob(blob=>{
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = "mushitori_day" + view.day + "_" + (view.index + 1) + ".png";
+      a.click();
+      URL.revokeObjectURL(url);
+    }, "image/png");
+  };
+  img.src = src;
+}
+
+/* ============================================================
+   起動
+   ============================================================ */
+buildAll();
+refresh();
+</script>
+</body>
+</html>
