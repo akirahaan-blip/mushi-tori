@@ -1,0 +1,164 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>むしトリたいかい管理</title>
+<style>
+body{font-family:sans-serif;max-width:900px;margin:auto;padding:10px}
+details{border:1px solid #ddd;border-radius:10px;margin:8px 0;padding:8px}
+.research{border:1px solid #eee;border-radius:8px;padding:8px;margin:8px 0}
+button{padding:6px 10px;margin:4px}
+.summary{position:sticky;top:0;background:#fff;padding:8px;border-bottom:1px solid #ddd}
+.small{font-size:.9em;color:#555}
+.photo{max-width:150px;display:block;margin-top:5px}
+</style>
+</head>
+<body>
+<div class="summary">
+<b>週間合計: <span id="weekTotal">0</span>点</b>
+<button onclick="copySummary()">📋コピー</button>
+</div>
+
+<div id="days"></div>
+
+<h2>📊週間サマリー</h2>
+<pre id="weeklySummary"></pre>
+
+<script>
+const PLUS={ワシボン:5,ウォーグル:12,チルット:5,チルタリス:12,ドードー:5,ドードリオ:12,ネイティ:5,ネイティオ:12,ウッウ:16,デリバード:16,カモネギ:16,ヤミカラス:16,ルチャブル:26,ドンカラス:20,リザードン:20,ボーマンダ:25,クレセリア:30};
+const MINUS={アゴジムシ:5,デンヂムシ:12,クワガノン:22,イシズマイ:5,イワパレス:12,ヘラクロス:16,ツボツボ:16,カイロス:16,キャタピー:5,トランセル:7,バタフリー:15};
+const POKEMON=[...new Set([...Object.keys(PLUS),...Object.keys(MINUS),"ヒトカゲ","リザード","タツベイ","コモルー"])];
+const POS=[["ワシボン","ウォーグル",10],["チルット","チルタリス",10],["ドードー","ドードリオ",10],["ネイティ","ネイティオ",10],["ヒトカゲ","リザード","リザードン",20],["タツベイ","コモルー","ボーマンダ",20]];
+const NEG=[["イシズマイ","イワパレス",-10],["アゴジムシ","デンヂムシ","クワガノン",-20],["キャタピー","トランセル","バタフリー",-20]];
+
+function createDay(n){
+return `
+<details open>
+<summary><b>DAY${n}</b> 合計:<span class="dayTotal">0</span>点</summary>
+<button onclick="addResearch(this)">＋リサーチ追加</button>
+<div class="researches"></div>
+</details>`;
+}
+
+document.getElementById("days").innerHTML=[1,2,3,4,5,6,7].map(createDay).join("");
+
+function addResearch(btn){
+const wrap=btn.parentElement.querySelector(".researches");
+const d=document.createElement("div");
+d.className="research";
+d.innerHTML=`
+<details>
+<summary>リサーチ <span class="score">0</span>点</summary>
+<input placeholder="リサーチ名">
+<label><input type="checkbox" class="spray">🧴スプレー</label><br>
+<input type="file" accept="image/*" class="img">
+<img class="photo" hidden>
+<div class="mons"></div>
+<button type="button" class="addMon">＋ポケモン</button>
+<div class="small detail"></div>
+</details>`;
+wrap.appendChild(d);
+
+d.querySelector(".img").onchange=e=>{
+ const f=e.target.files[0];
+ if(!f)return;
+ const r=new FileReader();
+ r.onload=()=>{
+   d.querySelector(".photo").src=r.result;
+   d.querySelector(".photo").hidden=false;
+   save();
+ };
+ r.readAsDataURL(f);
+};
+
+d.querySelector(".addMon").onclick=()=>{
+ const row=document.createElement("div");
+ row.innerHTML=`
+ <select>${POKEMON.map(p=>`<option>${p}</option>`).join("")}</select>
+ ⭐<input type="checkbox" class="shiny">
+ <button type="button">❌</button>`;
+ row.querySelector("select").onchange=calc;
+ row.querySelector(".shiny").onchange=calc;
+ row.querySelector("button").onclick=()=>{row.remove();calc();};
+ d.querySelector(".mons").appendChild(row);
+ calc();
+};
+d.querySelector(".spray").onchange=calc;
+d.querySelector(".addMon").click();
+}
+
+function calc(){
+let week=0,summary=[];
+document.querySelectorAll("#days details").forEach((day,i)=>{
+ const rs=day.querySelectorAll(".research");
+ let dayTotal=0;
+
+ rs.forEach(r=>{
+  let score=0,bugLoss=0;
+  const mons=[];
+
+  r.querySelectorAll(".mons div").forEach(row=>{
+   const p=row.querySelector("select").value;
+   const shiny=row.querySelector(".shiny").checked;
+   let val=0;
+
+   if(PLUS[p]) val=PLUS[p];
+   if(MINUS[p]) val=-MINUS[p];
+
+   if(shiny) val*=2;
+
+   score+=val;
+   if(val<0) bugLoss+=Math.abs(val);
+
+   mons.push({p,shiny});
+  });
+
+  POS.forEach(f=>{
+   const need=f.slice(0,-1), b=f.at(-1);
+   if(need.every(x=>mons.some(m=>m.p===x))){
+      const shinyFamily=need.every(x=>mons.some(m=>m.p===x && m.shiny));
+      score+= shinyFamily ? b*2 : b;
+   }
+  });
+
+  NEG.forEach(f=>{
+   const need=f.slice(0,-1), b=Math.abs(f.at(-1));
+   if(need.every(x=>mons.some(m=>m.p===x))){
+      const shinyFamily=need.every(x=>mons.some(m=>m.p===x && m.shiny));
+      const loss= shinyFamily ? b*2 : b;
+      score-=loss;
+      bugLoss+=loss;
+   }
+  });
+
+  if(r.querySelector(".spray").checked) score+=bugLoss;
+
+  r.querySelector(".score").textContent=score;
+  r.querySelector(".detail").textContent=`虫減点合計:${bugLoss} ${r.querySelector(".spray").checked?"(スプレー無効化)":""}`;
+  dayTotal+=score;
+ });
+
+ day.querySelector(".dayTotal").textContent=dayTotal;
+ week+=dayTotal;
+ summary.push(`DAY${i+1} ${dayTotal}`);
+});
+
+document.getElementById("weekTotal").textContent=week;
+summary.push("");
+summary.push(`週間合計 ${week}`);
+document.getElementById("weeklySummary").textContent=summary.join("\n");
+
+save();
+}
+
+function copySummary(){
+navigator.clipboard.writeText(document.getElementById("weeklySummary").textContent);
+alert("週間サマリーをコピーしました");
+}
+
+function save(){
+localStorage.setItem("mushi_tori_complete",document.body.innerHTML);
+}
+</script>
+</body></html>
