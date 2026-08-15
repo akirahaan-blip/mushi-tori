@@ -404,39 +404,34 @@ function buildSlot(dayData, slotIndex){
   return wrap;
 }
 
-function buildAll(){
-  // 1. 各Dayに「入力済みのスロット」があるかチェックする関数
-  function isDayFilled(d) {
-    if (!d.slots || d.slots.length === 0) return false;
-    
-    // slotsの中に1つでも値（文字列や数値など）が入っていれば「入力済み」とみなす
-    // ※もし slot がオブジェクトの場合は d.slots.some(s => s && s.value) のように変更
-    return d.slots.some(slot => {
-      if (slot === null || slot === undefined) return false;
-      if (typeof slot === "string") return slot.trim() !== "";
-      if (typeof slot === "object") return Object.values(slot).some(v => v !== "" && v !== null);
-      return true; // 数値などが直接入っている場合
-    });
+/* 入力済みの枠か（ポケモン・リサーチ名・スプレーのどれかがあれば入力済み）
+   slotの形は emptySlot() で固定なので、項目を直接見て判定する。
+   Object.values() で一括判定すると spray:false や mons:[] が「値あり」と見なされ、
+   すべて入力済みになってしまうため使わない。 */
+function hasInput(slot){
+  return slot.mons.some(m => m.name) || slot.label.trim() !== "" || slot.spray === true;
+}
+
+/* 最後に入力したDAY（まだ何もなければ0） */
+function lastEnteredDay(){
+  for(let i = state.days.length - 1; i >= 0; i--){
+    if(state.days[i].slots.some(hasInput)) return state.days[i].day;
   }
+  return 0;
+}
 
-  // 2. 最初の「未入力のDay」を探す
-  // （一度も入力されていない最初のDayを取得）
-  let targetDay = state.days.find(d => !isDayFilled(d));
+function buildAll(){
+  // 開き直したときは「前回入力したDAY」と「その次のDAY」を開く。
+  // 途中で1日飛ばしても、続きから再開できるようにするため。
+  const last = lastEnteredDay();
+  const openDays = last === 0 ? [1] : [last, last + 1];
 
-  // もし全Day入力済みの場合は、最後のDayを開く（なければ Day 1）
-  const targetDayNumber = targetDay 
-    ? targetDay.day 
-    : (state.days[state.days.length - 1]?.day || 1);
-
-  // 3. HTML要素の構築
-  daysEl.innerHTML = ""; // 再描画時のために一旦クリア（必要に応じて）
+  daysEl.innerHTML = ""; // 再描画時のために一旦クリア
 
   state.days.forEach(d => {
     const det = document.createElement("details");
     det.className = "day";
-
-    // 【修正箇所】判定した targetDayNumber と一致するDayだけを開く
-    det.open = (d.day === targetDayNumber);
+    det.open = openDays.includes(d.day);
 
     const sum = document.createElement("summary");
     const ttl = document.createElement("span");
@@ -593,8 +588,25 @@ function makeImage(view){
 /* ============================================================
    起動
    ============================================================ */
+
+/* 開いたDAYまでスクロールする（ベストスコア帯に隠れないよう少し上に余白をとる） */
+function scrollToOpenDay(){
+  const last = lastEnteredDay();
+  if(last === 0) return;               // 初回は先頭（DAY1）のまま
+  const el = state.days[last - 1]._el;
+  if(!el) return;
+  const bar = document.querySelector(".best");
+  const offset = (bar ? bar.offsetHeight : 0) + 8;
+  const y = el.getBoundingClientRect().top + window.scrollY - offset;
+  window.scrollTo(0, Math.max(0, y));
+}
+
+// ブラウザによる読み込み時の位置復元を止める（上の移動が打ち消されないように）
+if("scrollRestoration" in history) history.scrollRestoration = "manual";
+
 buildAll();
 refresh();
+scrollToOpenDay();
 </script>
 </body>
 </html>
