@@ -405,20 +405,25 @@ function buildSlot(dayData, slotIndex){
 }
 
 function buildAll(){
-  // ★データ構造の違いでエラーを起こさない安全な判定関数
+  // ★実際のデータ構造（label, spray, mons）にぴったり合わせた正確な判定関数
   function isDayFilled(d) {
     if (!d || !d.slots || !Array.isArray(d.slots)) return false;
     
-    return d.slots.some(slot => {
-      if (slot === null || slot === undefined) return false;
-      if (typeof slot === "string") return slot.trim() !== "";
-      if (typeof slot === "number" || typeof slot === "boolean") return true;
-      if (typeof slot === "object") {
-        return Object.values(slot).some(val => 
-          val !== null && val !== undefined && String(val).trim() !== ""
-        );
-      }
-      return false;
+    // スロットの中に1つでも「入力済み」のものがあるかチェック
+    return d.slots.some(sl => {
+      if (!sl) return false;
+      
+      // 1. label（テキスト）に入力があるか
+      const hasLabel = typeof sl.label === "string" && sl.label.trim() !== "";
+      
+      // 2. spray（フラグ）が true になっているか
+      const hasSpray = sl.spray === true;
+      
+      // 3. mons（配列）にデータが入っているか
+      const hasMons = Array.isArray(sl.mons) && sl.mons.length > 0;
+
+      // どれか1つでも該当すれば「入力済み」
+      return hasLabel || hasSpray || hasMons;
     });
   }
 
@@ -428,7 +433,7 @@ function buildAll(){
     targetDay = state.days.find(d => !isDayFilled(d));
   }
 
-  // 2. 開くべきDay番号（見つからなければ必ずDay 1）
+  // 2. 開くべきDay番号（未入力がなければ必ずDay 1）
   const targetDayNumber = targetDay 
     ? targetDay.day 
     : (state.days?.[0]?.day || 1);
@@ -459,7 +464,6 @@ function buildAll(){
       d._el = det;
     });
   }
-}
 }
 /* ============================================================
    再計算と表示更新
