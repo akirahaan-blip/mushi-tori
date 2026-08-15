@@ -99,7 +99,6 @@ button:disabled{opacity:.45;cursor:not-allowed}
 
 /* ============================================================
    スコア表（設計書 4.1）
-   リザードン+40・ヘラクロス-32 は天敵ボーナス反映済みの値
    ============================================================ */
 const SCORE = {
   // ひこう系（加点）
@@ -119,11 +118,20 @@ const SCORE = {
   "ヒトカゲ":0, "リザード":0, "タツベイ":0, "コモルー":0
 };
 
+/* DAY7限定の追加・上書きスコア */
+const DAY7_SCORE = {
+  "ポッチャマ": 5,
+  "ポッタイシ": 12,
+  "エンペルト": 20,
+  "ツボツボ": -32 // 通常の-16から-32に上書き
+};
+
 /* 選択肢（グループ分け） */
 const GROUPS = [
   { name:"ひこう（加点）", list:["ワシボン","ウォーグル","チルット","チルタリス",
       "ドードー","ドードリオ","ネイティ","ネイティオ","ウッウ","デリバード",
-      "カモネギ","ヤミカラス","ドンカラス","ルチャブル","リザードン","ボーマンダ","クレセリア"] },
+      "カモネギ","ヤミカラス","ドンカラス","ルチャブル","リザードン","ボーマンダ","クレセリア",
+      "ポッチャマ", "ポッタイシ", "エンペルト"] },
   { name:"むし（減点）", list:["アゴジムシ","デンヂムシ","クワガノン","イシズマイ","イワパレス",
       "ヘラクロス","ツボツボ","カイロス","キャタピー","トランセル","バタフリー"] },
   { name:"個体点なし（種族ボーナス用）", list:["ヒトカゲ","リザード","タツベイ","コモルー"] }
@@ -170,7 +178,6 @@ function loadState(){
     if(!raw) return createState();
     const s = JSON.parse(raw);
     if(!s || s.version !== 1 || !Array.isArray(s.days)) return createState();
-    // 形が壊れていても落ちないように埋め直す
     const fresh = createState();
     s.days.forEach((d,i)=>{
       if(i >= DAYS || !d || !Array.isArray(d.slots)) return;
@@ -203,25 +210,31 @@ function save(){
 }
 
 const state = loadState();
-const photos = {};      // 写真は保存しない（この変数の中だけに持つ）
-const views  = [];      // 各リサーチ枠のDOM参照
+const photos = {};      
+const views  = [];      
 
 /* ============================================================
    スコア計算（設計書 4.5）
    ============================================================ */
-function calcSlot(slot){
+function calcSlot(slot, day){
   const items = [];
 
   // 1. 個体スコア（色違いは2倍）
-  slot.mons.forEach(m=>{
-    if(!m.name) return;
-    const base = SCORE[m.name] || 0;
+  slot.mons.forEach(m => {
+    if (!m.name) return;
+
+    // DAY7かつDAY7限定スコアが存在する場合はそちらを優先
+    let base = SCORE[m.name] || 0;
+    if (day === 7 && m.name in DAY7_SCORE) {
+      base = DAY7_SCORE[m.name];
+    }
+
     const value = m.shiny ? base * 2 : base;
     items.push({ text: m.name + (m.shiny ? "★" : ""), value });
   });
 
-  // 2. 種族ボーナス（色違いでも倍にしない）
-  FAMILIES.forEach(f=>{
+  // 2. 種族ボーナス
+  FAMILIES.forEach(f => {
     const complete = f.members.every(n => slot.mons.some(m => m.name === n));
     if(complete){
       items.push({ text:"種族ボーナス(" + f.members.join("+") + ")", value:f.bonus });
@@ -231,14 +244,14 @@ function calcSlot(slot){
   // 3. スプレー：減点のうち最も大きい1つだけを0にする
   if(slot.spray){
     let worstIdx = -1, worst = 0;
-    items.forEach((it, i)=>{
+    items.forEach((it, i) => {
       if(it.value < worst){ worst = it.value; worstIdx = i; }
     });
     if(worstIdx >= 0) items[worstIdx].sprayed = true;
   }
 
   // 4. 合計
-  const total = items.reduce((sum, it)=> sum + (it.sprayed ? 0 : it.value), 0);
+  const total = items.reduce((sum, it) => sum + (it.sprayed ? 0 : it.value), 0);
   return { total, items };
 }
 
@@ -252,9 +265,9 @@ function buildOptions(){
   GROUPS.forEach(g=>{
     html += '<optgroup label="' + g.name + '">';
     g.list.forEach(n=>{
-      const v = SCORE[n];
+      const v = SCORE[n] !== undefined ? SCORE[n] : DAY7_SCORE[n];
       const sign = v > 0 ? "+" + v : v;
-      html += '<option value="' + n + '">' + n + "（" + sign + "）</option>";
+      html += '<option value="' + n + '">' + n + "</option>";
     });
     html += "</optgroup>";
   });
@@ -299,7 +312,7 @@ function buildSlot(dayData, slotIndex){
   const wrap = document.createElement("div");
   wrap.className = "slot";
 
-  // 見出し（枠番号・スコア）
+  // 見出し
   const head = document.createElement("div");
   head.className = "slot-head";
   const no = document.createElement("span");
@@ -372,7 +385,6 @@ function buildSlot(dayData, slotIndex){
   };
   views.push(view);
 
-  // 既存データの行を並べる
   slot.mons.forEach(m => buildMonRow(slot, m, view));
 
   addBtn.onclick = ()=>{
@@ -404,15 +416,10 @@ function buildSlot(dayData, slotIndex){
   return wrap;
 }
 
-/* 入力済みの枠か（ポケモン・リサーチ名・スプレーのどれかがあれば入力済み）
-   slotの形は emptySlot() で固定なので、項目を直接見て判定する。
-   Object.values() で一括判定すると spray:false や mons:[] が「値あり」と見なされ、
-   すべて入力済みになってしまうため使わない。 */
 function hasInput(slot){
   return slot.mons.some(m => m.name) || slot.label.trim() !== "" || slot.spray === true;
 }
 
-/* 最後に入力したDAY（まだ何もなければ0） */
 function lastEnteredDay(){
   for(let i = state.days.length - 1; i >= 0; i--){
     if(state.days[i].slots.some(hasInput)) return state.days[i].day;
@@ -421,12 +428,10 @@ function lastEnteredDay(){
 }
 
 function buildAll(){
-  // 開き直したときは「前回入力したDAY」と「その次のDAY」を開く。
-  // 途中で1日飛ばしても、続きから再開できるようにするため。
   const last = lastEnteredDay();
   const openDays = last === 0 ? [1] : [last, last + 1];
 
-  daysEl.innerHTML = ""; // 再描画時のために一旦クリア
+  daysEl.innerHTML = "";
 
   state.days.forEach(d => {
     const det = document.createElement("details");
@@ -449,17 +454,16 @@ function buildAll(){
     d._el = det;
   });
 }
+
 /* ============================================================
    再計算と表示更新
    ============================================================ */
 function refresh(){
-  // スプレーはイベント期間中1回だけ
   const sprayUsed = views.some(v => v.slot.spray);
-
   let best = null;
 
   views.forEach(v=>{
-    const { total, items } = calcSlot(v.slot);
+    const { total, items } = calcSlot(v.slot, v.day);
     v.total = total;
     v.items = items;
 
@@ -473,7 +477,7 @@ function refresh(){
     }else{
       v.detailEl.innerHTML = items.map(it=>{
         const sign = it.value > 0 ? "+" + it.value : it.value;
-        const line = it.text + "　" + sign + (it.sprayed ? "　→ 0（スプレー）" : "");
+        const line = it.text + " " + sign + (it.sprayed ? " → 0（スプレー）" : "");
         return it.sprayed ? '<span class="sprayed">' + line + "</span>" : line;
       }).join("<br>");
     }
@@ -489,7 +493,6 @@ function refresh(){
                             : locked        ? "（他のリサーチで使用済み）"
                             : "";
 
-    // ベストスコア候補（空の枠は対象外）
     const hasMon = v.slot.mons.some(m => m.name);
     if(hasMon && (best === null || total > best.total)) best = v;
   });
@@ -504,7 +507,7 @@ function refresh(){
 
   // ベストスコア表示
   document.getElementById("bestVal").textContent = best
-    ? "DAY" + best.day + " " + SLOT_MARK[best.index] + "　" + best.total + "点"
+    ? "DAY" + best.day + " " + SLOT_MARK[best.index] + " " + best.total + "点"
       + (best.slot.label ? "（" + best.slot.label + "）" : "")
     : "まだ記録がありません";
 
@@ -520,7 +523,7 @@ function buildPostText(view){
     .map(m => m.name + (m.shiny ? "★" : ""));
   const lines = [
     "#むしトリたいかい",
-    "DAY" + view.day + " " + SLOT_MARK[view.index] + "　" + view.total + "点"
+    "DAY" + view.day + " " + SLOT_MARK[view.index] + " " + view.total + "点"
   ];
   if(names.length) lines.push(names.join(" / "));
   if(view.slot.spray) lines.push("🧴むしよけスプレー使用");
@@ -559,7 +562,6 @@ function makeImage(view){
 
     ctx.drawImage(img, 0, 0, w, h);
 
-    // 下部にスコア帯を描く
     ctx.fillStyle = "#1b3a5c";
     ctx.fillRect(0, h, w, barH);
     ctx.fillStyle = "#fff";
@@ -588,11 +590,9 @@ function makeImage(view){
 /* ============================================================
    起動
    ============================================================ */
-
-/* 開いたDAYまでスクロールする（ベストスコア帯に隠れないよう少し上に余白をとる） */
 function scrollToOpenDay(){
   const last = lastEnteredDay();
-  if(last === 0) return;               // 初回は先頭（DAY1）のまま
+  if(last === 0) return;
   const el = state.days[last - 1]._el;
   if(!el) return;
   const bar = document.querySelector(".best");
@@ -601,7 +601,6 @@ function scrollToOpenDay(){
   window.scrollTo(0, Math.max(0, y));
 }
 
-// ブラウザによる読み込み時の位置復元を止める（上の移動が打ち消されないように）
 if("scrollRestoration" in history) history.scrollRestoration = "manual";
 
 buildAll();
