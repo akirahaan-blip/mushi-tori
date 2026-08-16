@@ -119,14 +119,25 @@ const SCORE = {
   "ヒトカゲ":0, "リザード":0, "タツベイ":0, "コモルー":0
 };
 
-/* 選択肢（グループ分け） */
+/* DAY7限定の追加・上書きスコア（設計書 4.6）
+   エンペルト+40・ツボツボ-32 は天敵ボーナス反映済みの値
+   （エンペルトはみず／はがねで、むし・いわのツボツボに強い） */
+const DAY7_SCORE = {
+  "ポッチャマ": 5,
+  "ポッタイシ": 12,
+  "エンペルト": 40,
+  "ツボツボ": -32   // 通常の-16から-32に上書き
+};
+
+/* 選択肢（グループ分け）／day7:true のグループはDAY7でのみ表示する */
 const GROUPS = [
   { name:"ひこう（加点）", list:["ワシボン","ウォーグル","チルット","チルタリス",
       "ドードー","ドードリオ","ネイティ","ネイティオ","ウッウ","デリバード",
       "カモネギ","ヤミカラス","ドンカラス","ルチャブル","リザードン","ボーマンダ","クレセリア"] },
   { name:"むし（減点）", list:["アゴジムシ","デンヂムシ","クワガノン","イシズマイ","イワパレス",
       "ヘラクロス","ツボツボ","カイロス","キャタピー","トランセル","バタフリー"] },
-  { name:"個体点なし（種族ボーナス用）", list:["ヒトカゲ","リザード","タツベイ","コモルー"] }
+  { name:"個体点なし（種族ボーナス用）", list:["ヒトカゲ","リザード","タツベイ","コモルー"] },
+  { name:"DAY7限定（加点）", list:["ポッチャマ","ポッタイシ","エンペルト"], day7:true }
 ];
 
 /* 種族ボーナス（設計書 4.3）／色違いでも倍にしない */
@@ -138,6 +149,7 @@ const FAMILIES = [
   { members:["ヤミカラス","ドンカラス"],          bonus:10 },
   { members:["ヒトカゲ","リザード","リザードン"], bonus:20 },
   { members:["タツベイ","コモルー","ボーマンダ"], bonus:20 },
+  { members:["ポッチャマ","ポッタイシ","エンペルト"], bonus:20, day7:true },
   { members:["イシズマイ","イワパレス"],                 bonus:-10 },
   { members:["アゴジムシ","デンヂムシ","クワガノン"],    bonus:-20 },
   { members:["キャタピー","トランセル","バタフリー"],    bonus:-20 }
@@ -209,19 +221,27 @@ const views  = [];      // 各リサーチ枠のDOM参照
 /* ============================================================
    スコア計算（設計書 4.5）
    ============================================================ */
-function calcSlot(slot){
+
+/* そのDAYでの個体スコア。DAY7限定スコアがあればそちらを優先する */
+function scoreOf(name, day){
+  if(day === 7 && name in DAY7_SCORE) return DAY7_SCORE[name];
+  return SCORE[name] || 0;
+}
+
+function calcSlot(slot, day){
   const items = [];
 
   // 1. 個体スコア（色違いは2倍）
-  slot.mons.forEach(m=>{
-    if(!m.name) return;
-    const base = SCORE[m.name] || 0;
+  slot.mons.forEach(m => {
+    if (!m.name) return;
+    const base = scoreOf(m.name, day);
     const value = m.shiny ? base * 2 : base;
     items.push({ text: m.name + (m.shiny ? "★" : ""), value });
   });
 
   // 2. 種族ボーナス（色違いでも倍にしない）
-  FAMILIES.forEach(f=>{
+  FAMILIES.forEach(f => {
+    if(f.day7 && day !== 7) return;   // DAY7限定の族はDAY7でのみ加算する
     const complete = f.members.every(n => slot.mons.some(m => m.name === n));
     if(complete){
       items.push({ text:"種族ボーナス(" + f.members.join("+") + ")", value:f.bonus });
@@ -231,14 +251,14 @@ function calcSlot(slot){
   // 3. スプレー：減点のうち最も大きい1つだけを0にする
   if(slot.spray){
     let worstIdx = -1, worst = 0;
-    items.forEach((it, i)=>{
+    items.forEach((it, i) => {
       if(it.value < worst){ worst = it.value; worstIdx = i; }
     });
     if(worstIdx >= 0) items[worstIdx].sprayed = true;
   }
 
   // 4. 合計
-  const total = items.reduce((sum, it)=> sum + (it.sprayed ? 0 : it.value), 0);
+  const total = items.reduce((sum, it) => sum + (it.sprayed ? 0 : it.value), 0);
   return { total, items };
 }
 
@@ -247,12 +267,14 @@ function calcSlot(slot){
    ============================================================ */
 const daysEl = document.getElementById("days");
 
-function buildOptions(){
+/* 選択肢はDAYによって中身が変わる（DAY7限定の追加ポケモンと、上書きされた点数） */
+function buildOptions(day){
   let html = '<option value="">— 選択 —</option>';
   GROUPS.forEach(g=>{
+    if(g.day7 && day !== 7) return;   // DAY7限定グループはDAY7でだけ出す
     html += '<optgroup label="' + g.name + '">';
     g.list.forEach(n=>{
-      const v = SCORE[n];
+      const v = scoreOf(n, day);
       const sign = v > 0 ? "+" + v : v;
       html += '<option value="' + n + '">' + n + "（" + sign + "）</option>";
     });
@@ -260,14 +282,15 @@ function buildOptions(){
   });
   return html;
 }
-const OPTIONS_HTML = buildOptions();
+const OPTIONS_NORMAL = buildOptions(1);   // DAY1〜6用
+const OPTIONS_DAY7   = buildOptions(7);   // DAY7用
 
 function buildMonRow(slot, mon, view){
   const row = document.createElement("div");
   row.className = "mon";
 
   const sel = document.createElement("select");
-  sel.innerHTML = OPTIONS_HTML;
+  sel.innerHTML = view.day === 7 ? OPTIONS_DAY7 : OPTIONS_NORMAL;
   sel.value = mon.name;
   sel.onchange = ()=>{ mon.name = sel.value; refresh(); };
 
@@ -449,17 +472,17 @@ function buildAll(){
     d._el = det;
   });
 }
+
 /* ============================================================
    再計算と表示更新
    ============================================================ */
 function refresh(){
   // スプレーはイベント期間中1回だけ
   const sprayUsed = views.some(v => v.slot.spray);
-
   let best = null;
 
   views.forEach(v=>{
-    const { total, items } = calcSlot(v.slot);
+    const { total, items } = calcSlot(v.slot, v.day);
     v.total = total;
     v.items = items;
 
@@ -588,7 +611,6 @@ function makeImage(view){
 /* ============================================================
    起動
    ============================================================ */
-
 /* 開いたDAYまでスクロールする（ベストスコア帯に隠れないよう少し上に余白をとる） */
 function scrollToOpenDay(){
   const last = lastEnteredDay();
